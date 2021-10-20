@@ -119,6 +119,7 @@ var (
 	bucket        string
 	tlsCert       string
 	tlsKey        string
+	cacheTime     string
 	letsEncrypt   bool
 )
 
@@ -132,6 +133,7 @@ func init() {
 	flag.StringVar(&address, "address", defaultEnvString("S3WWW_ADDRESS", "127.0.0.1:8080"), "Bind to a specific ADDRESS:PORT, ADDRESS can be an IP or hostname")
 	flag.StringVar(&tlsCert, "ssl-cert", defaultEnvString("S3WWW_SSL_CERT", ""), "TLS certificate for this server")
 	flag.StringVar(&tlsKey, "ssl-key", defaultEnvString("S3WWW_SSL_KEY", ""), "TLS private key for this server")
+	flag.StringVar(&cacheTime, "cache-time", defaultEnvString("S3WWW_CACHE_TIME", "5m"), "Time to keep cache about directory listings")
 	flag.BoolVar(&letsEncrypt, "lets-encrypt", defaultEnvBool("S3WWW_LETS_ENCRYPT", false), "Enable Let's Encrypt")
 }
 
@@ -241,10 +243,15 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	cacheDuration, err := time.ParseDuration(cacheTime)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
 	s3 := &S3{
 		Client: client,
 		bucket: bucket,
-		cache:  cache.New(5*time.Minute, 10*time.Minute),
+		cache:  cache.New(cacheDuration, 10*time.Minute),
 	}
 
 	mux := http.FileServer(s3)
