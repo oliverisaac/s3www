@@ -17,6 +17,7 @@ import (
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
+	"github.com/patrickmn/go-cache"
 )
 
 // S3 - A S3 implements FileSystem using the minio client
@@ -28,10 +29,20 @@ import (
 type S3 struct {
 	*minio.Client
 	bucket string
+	cache  *cache.Cache
 }
 
 func pathIsDir(ctx context.Context, s3 *S3, name string) bool {
 	name = strings.Trim(name, pathSeparator) + pathSeparator
+	if name == pathSeparator {
+		return true
+	}
+
+	if boolIface, ok := s3.cache.Get(name); ok {
+		return boolIface.(bool)
+	}
+
+	var ret bool
 	listCtx, cancel := context.WithCancel(ctx)
 
 	objCh := s3.Client.ListObjects(listCtx,
@@ -41,14 +52,15 @@ func pathIsDir(ctx context.Context, s3 *S3, name string) bool {
 		})
 	for _ = range objCh {
 		cancel()
-		return true
+		ret = true
 	}
-	return false
+	s3.cache.SetDefault(name, ret)
+	return ret
 }
 
 // Open - implements http.Filesystem implementation.
 func (s3 *S3) Open(name string) (http.File, error) {
-	if name == pathSeparator || pathIsDir(context.Background(), s3, name) {
+	if pathIsDir(context.Background(), s3, name) {
 		return &httpMinioObject{
 			client: s3.Client,
 			object: nil,
@@ -229,7 +241,13 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	mux := http.FileServer(&S3{client, bucket})
+	s3 := &S3{
+		Client: client,
+		bucket: bucket,
+		cache:  cache.New(5*time.Minute, 10*time.Minute),
+	}
+
+	mux := http.FileServer(s3)
 	if letsEncrypt {
 		log.Printf("Started listening on https://%s\n", address)
 		certmagic.HTTPS([]string{address}, mux)
